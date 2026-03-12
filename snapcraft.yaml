@@ -40,21 +40,17 @@ apps:
     environment:
       PATH: /usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/snap/bin
 
-  # --- MODERN COMPONENT: The Plugin Controller ---
-  # Allows the system to interact with the new plugin architecture
   ggactl:
     command: bin/ggactl_plugin
     environment:
       PATH: /usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/snap/bin
 
-  # --- MODERN COMPONENT: Guest Compat Manager ---
-  # If your modern build includes the compat manager for legacy feature parity
   guest-compat-manager:
     command: bin/google_guest_compat_manager
     daemon: simple
     environment:
       PATH: /usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/snap/bin
-  # Compatibility runner for legacy metadata scripts
+  
   metadata-script-compat:
     command: bin/metadata_script_runner_compat
     environment:
@@ -86,7 +82,6 @@ parts:
       # 3. Create the bin directory
       mkdir -p "$CRAFT_PART_INSTALL/bin"
 
-      # 4. Use the correct paths from the 'cmd/' subdirectories
       cp -av cmd/google_guest_agent/google_guest_agent "$CRAFT_PART_INSTALL/bin/google_guest_agent_manager"
       cp -av cmd/gce_metadata_script_runner/gce_metadata_script_runner "$CRAFT_PART_INSTALL/bin/gce_metadata_script_runner"
       cp -av cmd/ggactl/ggactl_plugin "$CRAFT_PART_INSTALL/bin/ggactl_plugin"
