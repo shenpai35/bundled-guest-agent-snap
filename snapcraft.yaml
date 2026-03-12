@@ -90,8 +90,8 @@ parts:
       cp -av cmd/google_guest_agent/google_guest_agent "$CRAFT_PART_INSTALL/bin/google_guest_agent_manager"
       cp -av cmd/gce_metadata_script_runner/gce_metadata_script_runner "$CRAFT_PART_INSTALL/bin/gce_metadata_script_runner"
       cp -av cmd/ggactl/ggactl_plugin "$CRAFT_PART_INSTALL/bin/ggactl_plugin"
-      cp -av cmd/google_guest_compat_manager "$CRAFT_PART_INSTALL/bin/google_guest_compat_manager"
-      cp -av cmd/metadata_script_runner_compat "$CRAFT_PART_INSTALL/bin/metadata_script_runner_compat"
+      cp -av cmd/google_guest_compat_manager/google_guest_compat_manager "$CRAFT_PART_INSTALL/bin/google_guest_compat_manager"
+      cp -av cmd/metadata_script_runner_compat/metadata_script_runner_compat "$CRAFT_PART_INSTALL/bin/metadata_script_runner_compat"
       cp -av cmd/core_plugin/core_plugin "$CRAFT_PART_INSTALL/bin/"
 
       mkdir -p "$CRAFT_PART_INSTALL/usr/share/google-guest-agent"
