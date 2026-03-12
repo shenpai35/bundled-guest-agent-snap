@@ -1,0 +1,177 @@
+theorem@ubuntu22lts:~/new-bundled-agent-snap/snap$ cat snapcraft.yaml
+name: google-guest-agent
+base: core24
+adopt-info: modern-agent
+summary: Google Compute Engine guest agent
+description: |
+  Agent that enables core GCE guest features (accounts, OSLogin, networking,
+  startup/shutdown scripts, telemetry, MTLS metadata server credentials, etc.)
+grade: devel
+confinement: classic
+
+platforms:
+  amd64:
+    build-on: [amd64]
+    build-for: [amd64]
+  arm64:
+    build-on: [arm64]
+    build-for: [arm64]
+
+apps:
+  guest-agent:
+    # Seed /etc/default/instance_configs.cfg and kick off the agent
+    command: bin/guest-agent-entrypoint
+    daemon: simple
+    restart-condition: always
+    environment:
+      PATH: /usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/snap/bin
+
+  # For the metadata startup/shutdown scripts
+  metadata-script-runner:
+    command: bin/google_metadata_script_runner
+    environment:
+      PATH: /usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/snap/bin
+
+  # Mirror the upstream systemd certificate refresh
+  workload-cert-refresh:
+    command: bin/gce_workload_cert_refresh
+    daemon: oneshot
+    timer: "00:00-24:00/144"  # every 10 minutes/ 144 times a day
+    environment:
+      PATH: /usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/snap/bin
+
+  # --- MODERN COMPONENT: The Plugin Controller ---
+  # Allows the system to interact with the new plugin architecture
+  ggactl:
+    command: bin/ggactl_plugin
+    environment:
+      PATH: /usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/snap/bin
+
+  # --- MODERN COMPONENT: Guest Compat Manager ---
+  # If your modern build includes the compat manager for legacy feature parity
+  guest-compat-manager:
+    command: bin/google_guest_compat_manager
+    daemon: simple
+    environment:
+      PATH: /usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/snap/bin
+  # Compatibility runner for legacy metadata scripts
+  metadata-script-compat:
+    command: bin/metadata_script_runner_compat
+    environment:
+      PATH: /usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/snap/bin
+parts:
+  modern-agent:
+    plugin: nil  # We use nil because we are taking full control with 'make'
+    source: https://github.com/GoogleCloudPlatform/google-guest-agent.git
+    source-type: git
+    source-branch: main
+    build-snaps:
+      - go/1.24/stable
+    build-packages:
+      - make
+      - git
+    build-environment:
+      - CGO_ENABLED: "0"
+    override-build: |
+      set -e
+    
+      version="$(git describe --tags --always || date +%Y%m%d)"
+
+      # 1. Build the binaries
+      VERSION=$version make
+
+      # 2. Set the version metadata
+      craftctl set version="$version"
+
+      # 3. Create the bin directory
+      mkdir -p "$CRAFT_PART_INSTALL/bin"
+
+      # 4. Use the correct paths from the 'cmd/' subdirectories
+      cp -av cmd/google_guest_agent/google_guest_agent "$CRAFT_PART_INSTALL/bin/google_guest_agent_manager"
+      cp -av cmd/gce_metadata_script_runner/gce_metadata_script_runner "$CRAFT_PART_INSTALL/bin/gce_metadata_script_runner"
+      cp -av cmd/ggactl/ggactl_plugin "$CRAFT_PART_INSTALL/bin/ggactl_plugin"
+      cp -av cmd/google_guest_compat_manager "$CRAFT_PART_INSTALL/bin/google_guest_compat_manager"
+      cp -av cmd/metadata_script_runner_compat "$CRAFT_PART_INSTALL/bin/metadata_script_runner_compat"
+      cp -av cmd/core_plugin/core_plugin "$CRAFT_PART_INSTALL/bin/"
+
+      mkdir -p "$CRAFT_PART_INSTALL/usr/share/google-guest-agent"
+      if [ -d "build/configs/usr/share/google-guest-agent" ]; then
+          cp -rv build/configs/usr/share/google-guest-agent/* "$CRAFT_PART_INSTALL/usr/share/google-guest-agent/"
+      fi
+      install -Dm0755 /dev/stdin "$CRAFT_PART_INSTALL/bin/guest-agent-entrypoint" << 'EOF'
+      #!/usr/bin/bash
+      set -e
+      CONF="/etc/default/instance_configs.cfg"
+      if [[ ! -f "$CONF" ]]; then
+        mkdir -p "$(dirname "$CONF")"
+        touch "$CONF"
+      fi
+      # CRITICAL: Point to the MANAGER binary for the modern agent
+      exec "$SNAP/bin/google_guest_agent_manager" "$@"
+      EOF
+    stage:
+      - bin/*
+      - etc/*
+      - usr/share/google-guest-agent/*
+
+  legacy-agent:
+    plugin: go
+    after: [modern-agent]
+    build-environment:
+      - CGO_ENABLED: "0"
+    source-type: git
+    source: https://github.com/GoogleCloudPlatform/guest-agent.git
+    source-branch: main
+    build-snaps:
+      - go/1.24/stable
+    override-build: |
+      set -e
+
+      # Copy debian `ldflags`
+      VERSION="$(git describe --tags --always || date +%Y%m%d)"
+      # craftctl set version="$VERSION"
+      LDFLAGS="-s -w -X main.version=$VERSION"
+
+      mkdir -p "$CRAFT_PART_INSTALL/bin" "$CRAFT_PART_INSTALL/usr/share/google-guest-agent" "$CRAFT_PART_INSTALL/usr/lib/systemd/system"
+
+
+      go build -ldflags="$LDFLAGS" -o "$CRAFT_PART_INSTALL/bin/google_guest_agent" ./google_guest_agent
+      go build -ldflags="$LDFLAGS" -o "$CRAFT_PART_INSTALL/bin/google_metadata_script_runner" ./google_metadata_script_runner
+      go build -ldflags="$LDFLAGS" -o "$CRAFT_PART_INSTALL/bin/gce_workload_cert_refresh" ./gce_workload_cert_refresh
+
+      # Ship the .cfg template and enable VLAN
+      sed --in-place 's/vlan_setup_enabled = false/vlan_setup_enabled = true/' instance_configs.cfg
+      install -Dm0644 instance_configs.cfg "$CRAFT_PART_INSTALL/usr/share/google-guest-agent/instance_configs.cfg"
+
+      # Install the service files.
+      install -Dm0644 *.service "$CRAFT_PART_INSTALL/usr/lib/systemd/system/"
+
+    stage:
+      - bin/google_guest_agent
+      - bin/google_metadata_script_runner
+      - bin/gce_workload_cert_refresh
+      - usr/share/google-guest-agent/**
+      - -usr/share/google-guest-agent/instance_configs.cfg
+      - usr/lib/systemd/system/*.service
+  # go-hooks contains:
+    # configure: helper script that updates the INI file (/etc/default/instance_configs.cfg)
+    # install: creates a systemd drop in file to ensure the snap's services start after ssh/network-online
+    # remove: cleans up the above systemd ordering on the snap's removal
+  go-hooks:
+    plugin: go
+    source: ./hooks-go
+    build-snaps:
+      - go/1.23/stable
+    build-environment:
+      - CGO_ENABLED: "0"
+    override-build: |
+      set -e
+      
+      mkdir --parents "$CRAFT_PART_INSTALL/snap/hooks"
+      go build -trimpath -ldflags "-s -w" -o "$CRAFT_PART_INSTALL/snap/hooks/configure" ./cmd/configure/main.go
+      go build -trimpath -ldflags "-s -w" -o "$CRAFT_PART_INSTALL/snap/hooks/install" ./cmd/install/main.go
+      go build -trimpath -ldflags "-s -w" -o "$CRAFT_PART_INSTALL/snap/hooks/remove" ./cmd/remove/main.go
+    stage:
+      - snap/hooks/configure
+      - snap/hooks/install
+      - snap/hooks/remove
